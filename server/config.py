@@ -19,7 +19,7 @@ class Settings:
     # Self-hosted H3-Base SGLang deployments. t2va and fl2va use the FL2VA
     # checkpoint; ref2va uses the Ref2VA checkpoint.
     sglang_fl2va_url: str = _env("SGLANG_FL2VA_URL", "http://localhost:30010")
-    sglang_ref2va_url: str = _env("SGLANG_REF2VA_URL", "http://localhost:30011")
+    sglang_ref2va_url: str = _env("SGLANG_REF2VA_URL", "http://localhost:30012")
 
     # Generated videos are written here, uploaded to S3, then deleted.
     output_dir: Path = Path(_env("OUTPUT_DIR", "./data/outputs")).resolve()
@@ -30,6 +30,8 @@ class Settings:
     s3_presign_expires_s: int = int(_env("S3_PRESIGN_EXPIRES_S", "3600"))
 
     short_edge: int = int(_env("H3_SHORT_EDGE", "768"))
+    # Denoising steps per H3-Base render; SGLang defaults to 50 when omitted.
+    num_inference_steps: int = int(_env("H3_NUM_INFERENCE_STEPS", "20"))
     poll_interval_s: float = float(_env("POLL_INTERVAL_S", "5"))
     context_ir_timeout_s: float = float(_env("CONTEXT_IR_TIMEOUT_S", "900"))
     h3_base_timeout_s: float = float(_env("H3_BASE_TIMEOUT_S", "3600"))

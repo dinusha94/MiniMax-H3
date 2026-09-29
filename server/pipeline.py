@@ -21,6 +21,7 @@ from config import settings
 
 RATIOS = {"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
 MAX_REF_IMAGES, MAX_REF_VIDEOS, MAX_REF_AUDIOS, MAX_REF_TOTAL = 9, 3, 3, 12
+POLL_RETRIES = 5
 
 
 class Mode(str, Enum):
@@ -129,6 +130,7 @@ def build_h3_base_payload(req: GenerationRequest, expanded_prompt: str) -> dict:
             "aspect_ratio": "auto" if req.ratio == "adaptive" else req.ratio,
             "duration_seconds": req.duration,
         },
+        "num_inference_steps": settings.num_inference_steps,
         "seed": req.seed,
     }
 
@@ -140,6 +142,17 @@ def _json_or_error(resp: httpx.Response, service: str) -> dict:
         return resp.json()
     except ValueError as exc:
         raise PipelineError(f"{service} returned non-JSON response: {resp.text[:1000]}") from exc
+
+
+async def _poll_get(client: httpx.AsyncClient, url: str, service: str, **kwargs) -> dict:
+    """GET a status URL, retrying transient network errors so one dropped poll doesn't fail the job."""
+    for attempt in range(POLL_RETRIES):
+        try:
+            return _json_or_error(await client.get(url, **kwargs), service)
+        except httpx.TransportError as exc:
+            if attempt == POLL_RETRIES - 1:
+                raise PipelineError(f"{service} unreachable after {POLL_RETRIES} attempts: {exc!r}") from exc
+            await asyncio.sleep(settings.poll_interval_s)
 
 
 async def run_context_ir(client: httpx.AsyncClient, req: GenerationRequest) -> str:
@@ -157,8 +170,8 @@ async def run_context_ir(client: httpx.AsyncClient, req: GenerationRequest) -> s
 
     deadline = time.monotonic() + settings.context_ir_timeout_s
     while True:
-        resp = await client.get(f"{base}/v2/query/video_generation/{task_id}", headers=headers)
-        task = _json_or_error(resp, "Context-IR query").get("task") or {}
+        polled = await _poll_get(client, f"{base}/v2/query/video_generation/{task_id}", "Context-IR query", headers=headers)
+        task = polled.get("task") or {}
         status = task.get("status")
         if status == "succeeded":
             prompt = (task.get("content") or {}).get("prompt")
@@ -172,8 +185,8 @@ async def run_context_ir(client: httpx.AsyncClient, req: GenerationRequest) -> s
         await asyncio.sleep(settings.poll_interval_s)
 
 
-async def run_h3_base(client: httpx.AsyncClient, mode: Mode, payload: dict, out_path: Path) -> None:
-    """Generate on the self-hosted SGLang H3-Base and download the MP4 to out_path."""
+async def run_h3_base(client: httpx.AsyncClient, mode: Mode, payload: dict, out_path: Path) -> dict:
+    """Generate on the self-hosted SGLang H3-Base, download the MP4 to out_path, return SGLang's video object."""
     base = (settings.sglang_ref2va_url if mode is Mode.REF2VA else settings.sglang_fl2va_url).rstrip("/")
 
     created = _json_or_error(await client.post(f"{base}/v1/videos", json=payload), "H3-Base")
@@ -183,7 +196,7 @@ async def run_h3_base(client: httpx.AsyncClient, mode: Mode, payload: dict, out_
 
     deadline = time.monotonic() + settings.h3_base_timeout_s
     while True:
-        info = _json_or_error(await client.get(f"{base}/v1/videos/{video_id}"), "H3-Base query")
+        info = await _poll_get(client, f"{base}/v1/videos/{video_id}", "H3-Base query")
         status = info.get("status")
         if status in ("completed", "succeeded"):
             break
@@ -202,6 +215,31 @@ async def run_h3_base(client: httpx.AsyncClient, mode: Mode, payload: dict, out_
         with out_path.open("wb") as f:
             async for chunk in resp.aiter_bytes():
                 f.write(chunk)
+    return info
+
+
+def h3_base_stats(info: dict, num_inference_steps: int) -> dict:
+    """Generation details from SGLang's completed video object.
+
+    SGLang's API only reports the total render time (text encoding + denoising + VAE decode),
+    so avg_step_s is an upper bound on the true per-step denoising time.
+    """
+    inference_s = info.get("inference_time_s")
+    created, completed = info.get("created_at"), info.get("completed_at")
+    queue_wait_s = None
+    if inference_s is not None and created is not None and completed is not None:
+        # created_at/completed_at are whole seconds, so this is accurate to about 1 s.
+        queue_wait_s = round(max(0.0, completed - created - inference_s), 1)
+    return {
+        "video_id": info.get("id"),
+        "size": info.get("size"),
+        "video_seconds": float(info["seconds"]) if info.get("seconds") else None,
+        "num_inference_steps": num_inference_steps,
+        "inference_time_s": round(inference_s, 2) if inference_s is not None else None,
+        "avg_step_s": round(inference_s / num_inference_steps, 2) if inference_s and num_inference_steps else None,
+        "queue_wait_s": queue_wait_s,
+        "peak_memory_mb": info.get("peak_memory_mb"),
+    }
 
 
 async def upload_result(local_path: Path, s3_folder: str, job_id: str) -> str:
@@ -227,18 +265,24 @@ async def generate(
     s3_folder: str,
     on_stage: Callable[[str], None] = lambda stage: None,
     on_prompt: Callable[[str], None] = lambda prompt: None,
+    on_h3_base: Callable[[dict], None] = lambda stats: None,
 ) -> str:
     """Run Context-IR -> H3-Base -> S3 upload and return the result's s3:// URI."""
     req.validate()
     out_path = settings.output_dir / f"{job_id}.mp4"
     timeout = httpx.Timeout(120.0, connect=15.0)
+    # SGLang's uvicorn closes idle connections after 5 s (its default keep-alive), the same as
+    # POLL_INTERVAL_S; expire ours first so a poll never reuses a socket the server is closing.
+    limits = httpx.Limits(keepalive_expiry=2.0)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             on_stage("context_ir")
             expanded_prompt = await run_context_ir(client, req)
             on_prompt(expanded_prompt)
             on_stage("h3_base")
-            await run_h3_base(client, req.mode, build_h3_base_payload(req, expanded_prompt), out_path)
+            payload = build_h3_base_payload(req, expanded_prompt)
+            info = await run_h3_base(client, req.mode, payload, out_path)
+            on_h3_base(h3_base_stats(info, payload["num_inference_steps"]))
         on_stage("upload")
         return await upload_result(out_path, s3_folder, job_id)
     finally:

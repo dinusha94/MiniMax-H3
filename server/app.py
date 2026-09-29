@@ -82,8 +82,24 @@ class Job:
     error: str | None = None
     expanded_prompt: str | None = None
     video_s3_uri: str | None = None
+    h3_base: dict | None = None  # generation details reported by SGLang
     created_at: float = field(default_factory=time.time)
     finished_at: float | None = None
+    stage_started: dict[str, float] = field(default_factory=dict)
+
+    def enter_stage(self, stage: str) -> None:
+        self.stage = stage
+        self.stage_started[stage] = time.time()
+
+    def timings(self) -> dict:
+        """Wall-clock seconds per stage (as seen by this server) and for the whole job."""
+        starts = list(self.stage_started.items())
+        end = self.finished_at or time.time()
+        stages = {
+            f"{stage}_s": round((starts[i + 1][1] if i + 1 < len(starts) else end) - started, 2)
+            for i, (stage, started) in enumerate(starts)
+        }
+        return {**stages, "total_s": round(end - self.created_at, 2)}
 
     def to_dict(self) -> dict:
         return {
@@ -110,8 +126,9 @@ async def _run_job(job: Job, req: GenerationRequest, s3_folder: str) -> None:
             req,
             job.id,
             s3_folder,
-            on_stage=lambda stage: setattr(job, "stage", stage),
+            on_stage=job.enter_stage,
             on_prompt=lambda prompt: setattr(job, "expanded_prompt", prompt),
+            on_h3_base=lambda stats: setattr(job, "h3_base", stats),
         )
         job.status = "succeeded"
         log.info("job %s succeeded: %s", job.id, job.video_s3_uri)
@@ -180,4 +197,5 @@ async def get_job_result(job_id: str) -> dict:
         "video_url": video_url,
         "video_url_expires_in": settings.s3_presign_expires_s,
         "expanded_prompt": job.expanded_prompt,
+        "generation": {"timings": job.timings(), "h3_base": job.h3_base},
     }
