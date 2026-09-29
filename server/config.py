@@ -32,6 +32,12 @@ class Settings:
     short_edge: int = int(_env("H3_SHORT_EDGE", "768"))
     # Denoising steps per H3-Base render; SGLang defaults to 50 when omitted.
     num_inference_steps: int = int(_env("H3_NUM_INFERENCE_STEPS", "20"))
+    # Cache-DiT: reuse DiT block outputs between similar steps. 0.12 / 2 measured 29-40% faster
+    # at 20 steps with reviewed-equivalent output. Needs SGLANG_CACHE_DIT_ENABLED=true on SGLang.
+    cache_dit_enabled: bool = _env("H3_CACHE_DIT_ENABLED", "false").lower() in ("1", "true", "yes")
+    cache_dit_threshold: float = float(_env("H3_CACHE_DIT_THRESHOLD", "0.12"))
+    cache_dit_max_cached_steps: int = int(_env("H3_CACHE_DIT_MAX_CACHED_STEPS", "2"))
+    cache_dit_warmup_steps: int = int(_env("H3_CACHE_DIT_WARMUP_STEPS", "4"))
     poll_interval_s: float = float(_env("POLL_INTERVAL_S", "5"))
     context_ir_timeout_s: float = float(_env("CONTEXT_IR_TIMEOUT_S", "900"))
     h3_base_timeout_s: float = float(_env("H3_BASE_TIMEOUT_S", "3600"))

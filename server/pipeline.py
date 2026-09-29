@@ -132,6 +132,19 @@ def build_h3_base_payload(req: GenerationRequest, expanded_prompt: str) -> dict:
         },
         "num_inference_steps": settings.num_inference_steps,
         "seed": req.seed,
+        **_cache_dit_fields(),
+    }
+
+
+def _cache_dit_fields() -> dict:
+    if not settings.cache_dit_enabled:
+        return {}
+    return {
+        "cache_dit_params": {
+            "residual_diff_threshold": settings.cache_dit_threshold,
+            "max_continuous_cached_steps": settings.cache_dit_max_cached_steps,
+            "max_warmup_steps": settings.cache_dit_warmup_steps,
+        }
     }
 
 
@@ -282,7 +295,7 @@ async def generate(
             on_stage("h3_base")
             payload = build_h3_base_payload(req, expanded_prompt)
             info = await run_h3_base(client, req.mode, payload, out_path)
-            on_h3_base(h3_base_stats(info, payload["num_inference_steps"]))
+            on_h3_base({**h3_base_stats(info, payload["num_inference_steps"]), "cache_dit": payload.get("cache_dit_params")})
         on_stage("upload")
         return await upload_result(out_path, s3_folder, job_id)
     finally:
