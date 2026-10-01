@@ -4,7 +4,7 @@ An internal FastAPI server that combines the hosted **H3-Context-IR** API, a **s
 
 1. sends the prompt and media URLs to MiniMax `POST /v2/h3_context_ir` and polls until the task has succeeded,
 2. passes the expanded prompt and the same media URLs to SGLang `POST /v1/videos`, then polls until the video is ready,
-3. downloads the MP4 (768p by default, or 480p) and uploads it to `<S3_OUTPUT_FOLDER>/<job_id>/<job_id>.mp4` with `s3_utils.upload_to_s3`.
+3. downloads the MP4 (768p by default, or 480p / 360p) and uploads it to `<S3_OUTPUT_FOLDER>/<job_id>/<job_id>.mp4` with `s3_utils.upload_to_s3`.
 
 The payloads match `scripts/readme/full-2k-*-h3-context-ir.sh` and `full-2k-*-h3-base.sh`. There is no authentication, so keep the server on an internal network.
 
@@ -51,7 +51,7 @@ curl -X POST localhost:8000/v1/jobs -H 'Content-Type: application/json' -d '{
 | `prompt` | all | Raw instruction. Context-IR expands it |
 | `duration` | all | 4–15 seconds (default 5) |
 | `ratio` | all | `adaptive`, `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`. Default is `16:9` for t2va (adaptive is not allowed there) and `adaptive` for the other modes |
-| `resolution` | all | `768p` (default) or `480p`. 768p is the only resolution MiniMax publishes recipes for; 480p is faster but its quality is unverified |
+| `resolution` | all | `768p` (default), `480p` or `360p`. 768p is the only resolution MiniMax publishes recipes for; the smaller ones are faster but their quality is unverified. Sides are rounded to multiples of 32, so 360p renders at 352 (640×352 at 16:9) |
 | `seed` | all | default 0 |
 | `first_frame_url`, `last_frame_url` | fl2va | image; one or both |
 | `reference_image_urls` | ref2va | ≤ 9 |
@@ -90,4 +90,4 @@ Each call presigns `video_url` again, so if the link has expired, just call agai
 ## Limitations
 
 - Jobs are stored in memory. A restart loses jobs in progress (the platform sees `404` and must resubmit), and jobs aren't shared across workers, so run a single uvicorn worker. Finished videos stay safe in S3 either way.
-- Output is 768p or 480p. 2K needs the hosted H3-Regenerate-2K API, which this server does not call.
+- Output is 768p, 480p or 360p. 2K needs the hosted H3-Regenerate-2K API, which this server does not call.

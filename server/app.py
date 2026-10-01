@@ -47,8 +47,9 @@ class JobRequest(BaseModel):
     ratio: str | None = Field(
         None, description="adaptive, 21:9, 16:9, 4:3, 1:1, 3:4, 9:16. Default: 16:9 for t2va, else adaptive"
     )
-    resolution: Literal["480p", "768p"] = Field(
-        DEFAULT_RESOLUTION, description="Output short edge: 768p (default, verified) or 480p (faster, unverified)"
+    resolution: Literal["360p", "480p", "768p"] = Field(
+        DEFAULT_RESOLUTION,
+        description="Output short edge: 768p (default, verified), or 480p / 360p (faster, unverified; 360p renders at 352)",
     )
     seed: int = 0
     # Media are presigned S3 URLs. They must stay valid until H3-Base has

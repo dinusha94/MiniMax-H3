@@ -21,8 +21,9 @@ from config import settings
 
 RATIOS = {"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
 # Output resolution -> target.short_edge sent to SGLang. 768 is the only short edge
-# MiniMax publishes recipes for; SGLang accepts 480 but logs an "unverified" warning.
-RESOLUTIONS = {"480p": 480, "768p": 768}
+# MiniMax publishes recipes for; SGLang accepts the others but logs an "unverified" warning.
+# SGLang rounds both sides to multiples of 32, so 360p renders at 352 (16:9 -> 640x352).
+RESOLUTIONS = {"360p": 360, "480p": 480, "768p": 768}
 DEFAULT_RESOLUTION = "768p"
 MAX_REF_IMAGES, MAX_REF_VIDEOS, MAX_REF_AUDIOS, MAX_REF_TOTAL = 9, 3, 3, 12
 POLL_RETRIES = 5
