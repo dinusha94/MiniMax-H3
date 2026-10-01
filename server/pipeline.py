@@ -20,6 +20,10 @@ import s3_utils
 from config import settings
 
 RATIOS = {"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
+# Output resolution -> target.short_edge sent to SGLang. 768 is the only short edge
+# MiniMax publishes recipes for; SGLang accepts 480 but logs an "unverified" warning.
+RESOLUTIONS = {"480p": 480, "768p": 768}
+DEFAULT_RESOLUTION = "768p"
 MAX_REF_IMAGES, MAX_REF_VIDEOS, MAX_REF_AUDIOS, MAX_REF_TOTAL = 9, 3, 3, 12
 POLL_RETRIES = 5
 
@@ -52,6 +56,7 @@ class GenerationRequest:
     prompt: str
     duration: int
     ratio: str
+    resolution: str = DEFAULT_RESOLUTION
     seed: int = 0
     first_frame: Media | None = None
     last_frame: Media | None = None
@@ -66,6 +71,8 @@ class GenerationRequest:
             raise ValueError("duration must be between 4 and 15 seconds")
         if self.ratio not in RATIOS:
             raise ValueError(f"ratio must be one of {sorted(RATIOS)}")
+        if self.resolution not in RESOLUTIONS:
+            raise ValueError(f"resolution must be one of {sorted(RESOLUTIONS)}")
         for media in filter(None, [self.first_frame, self.last_frame, *self.references]):
             if not media.url.startswith(("https://", "http://")):
                 raise ValueError(f"media URLs must be http(s) (presigned S3 links), got {media.url[:80]!r}")
@@ -126,7 +133,7 @@ def build_h3_base_payload(req: GenerationRequest, expanded_prompt: str) -> dict:
         "prompt": expanded_prompt,
         "conditions": conditions,
         "target": {
-            "short_edge": settings.short_edge,
+            "short_edge": RESOLUTIONS[req.resolution],
             "aspect_ratio": "auto" if req.ratio == "adaptive" else req.ratio,
             "duration_seconds": req.duration,
         },

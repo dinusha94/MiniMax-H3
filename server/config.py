@@ -29,7 +29,6 @@ class Settings:
     # Lifetime of the presigned result URL returned by GET /v1/jobs/{id}/result.
     s3_presign_expires_s: int = int(_env("S3_PRESIGN_EXPIRES_S", "3600"))
 
-    short_edge: int = int(_env("H3_SHORT_EDGE", "768"))
     # Denoising steps per H3-Base render; SGLang defaults to 50 when omitted.
     num_inference_steps: int = int(_env("H3_NUM_INFERENCE_STEPS", "20"))
     # Cache-DiT: reuse DiT block outputs between similar steps. 0.12 / 2 measured 29-40% faster

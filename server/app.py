@@ -11,12 +11,22 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from config import settings
-from pipeline import GenerationRequest, Media, MediaKind, Mode, PipelineError, generate, presign
+from pipeline import (
+    DEFAULT_RESOLUTION,
+    GenerationRequest,
+    Media,
+    MediaKind,
+    Mode,
+    PipelineError,
+    generate,
+    presign,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("h3_server")
@@ -36,6 +46,9 @@ class JobRequest(BaseModel):
     duration: int = Field(5, ge=4, le=15, description="Video length in seconds")
     ratio: str | None = Field(
         None, description="adaptive, 21:9, 16:9, 4:3, 1:1, 3:4, 9:16. Default: 16:9 for t2va, else adaptive"
+    )
+    resolution: Literal["480p", "768p"] = Field(
+        DEFAULT_RESOLUTION, description="Output short edge: 768p (default, verified) or 480p (faster, unverified)"
     )
     seed: int = 0
     # Media are presigned S3 URLs. They must stay valid until H3-Base has
@@ -59,6 +72,7 @@ class JobRequest(BaseModel):
             duration=self.duration,
             # Text-only generation cannot use adaptive ratio; media modes follow the inputs.
             ratio=self.ratio or ("16:9" if self.mode is Mode.T2VA else "adaptive"),
+            resolution=self.resolution,
             seed=self.seed,
             first_frame=one(self.first_frame_url),
             last_frame=one(self.last_frame_url),
@@ -77,6 +91,7 @@ class JobRequest(BaseModel):
 class Job:
     id: str
     mode: Mode
+    resolution: str
     status: str = "queued"  # queued | running | succeeded | failed
     stage: str | None = None  # context_ir | h3_base | upload
     error: str | None = None
@@ -105,6 +120,7 @@ class Job:
         return {
             "job_id": self.id,
             "mode": self.mode.value,
+            "resolution": self.resolution,
             "status": self.status,
             "stage": self.stage,
             "error": self.error,
@@ -166,7 +182,7 @@ async def create_job(body: JobRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    job = Job(id=uuid.uuid4().hex, mode=body.mode)
+    job = Job(id=uuid.uuid4().hex, mode=body.mode, resolution=req.resolution)
     JOBS[job.id] = job
     task = asyncio.create_task(_run_job(job, req, s3_folder))
     _TASKS.add(task)
